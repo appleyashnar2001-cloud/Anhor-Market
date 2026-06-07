@@ -11,7 +11,8 @@ from pytz import timezone
 
 import database as db
 
-BOT_TOKEN = os.getenv("BOT_TOKEN") 
+# Siz taqdim etgan haqiqiy bot tokeni joylashtirildi
+BOT_TOKEN = "8311735093:AAE6-C0E_6dNq6fW9yrQSYEASB-ge4kvnMU" 
 ADMIN_ID = 7180864511  
 UZB_TZ = timezone("Asia/Tashkent")
 
@@ -23,6 +24,7 @@ scheduler = AsyncioScheduler(timezone=UZB_TZ)
 class AdminStates(StatesGroup):
     waiting_for_worker_id = State()
     waiting_for_worker_name = State()
+    waiting_for_remove_id = State()
     waiting_for_broadcast = State()
 
 class WorkerStates(StatesGroup):
@@ -32,8 +34,8 @@ class WorkerStates(StatesGroup):
 def get_admin_kb():
     kb = [
         [types.KeyboardButton(text="👥 Ishchilar va Hisobot"), types.KeyboardButton(text="➕ Ishchi qo'shish")],
-        [types.KeyboardButton(text="🗄 O'tgan oylar hisoboti"), types.KeyboardButton(text="📥 Chatni o'qish")],
-        [types.KeyboardButton(text="📢 Hammaga xabar")]
+        [types.KeyboardButton(text="❌ Ishchini bo'shatish"), types.KeyboardButton(text="🗄 O'tgan oylar hisoboti")],
+        [types.KeyboardButton(text="📥 Chatni o'qish"), types.KeyboardButton(text="📢 Hammaga xabar")]
     ]
     return types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -110,6 +112,29 @@ async def add_worker_finish(message: types.Message, state: FSMContext):
     data = await state.get_data()
     if db.add_worker(data['tg_id'], message.text):
         await message.answer(f"✅ {message.text} muvaffaqiyatli qo'shildi!", reply_markup=get_admin_kb())
+    await state.clear()
+
+# --- ISHCHINI BO'SHATISH LOGIKASI ---
+@dp.message(F.text == "❌ Ishchini bo'shatish", F.from_user.id == ADMIN_ID)
+async def remove_worker_start(message: types.Message, state: FSMContext):
+    await message.answer("Bo'shatiladigan (o'chiriladigan) ishchining Telegram ID raqamini kiriting:")
+    await state.set_state(AdminStates.waiting_for_remove_id)
+
+@dp.message(AdminStates.waiting_for_remove_id, F.from_user.id == ADMIN_ID)
+async def remove_worker_finish(message: types.Message, state: FSMContext):
+    if not message.text.isdigit():
+        return await message.answer("ID raqam bo'lishi kerak!")
+    
+    tg_id = int(message.text)
+    worker_name = db.remove_worker(tg_id)
+    
+    if worker_name:
+        await message.answer(f"❌ *{worker_name}* (ID: `{tg_id}`) magazin tizimidan muvaffaqiyatli o'chirildi va bo'shatildi.", reply_markup=get_admin_kb(), parse_mode="Markdown")
+        try:
+            await bot.send_message(chat_id=tg_id, text="⚠️ Siz admin tomonidan magazin tizimidan chiqarildingiz va bo'shatildingiz.")
+        except: pass
+    else:
+        await message.answer("❌ Bunday ID ga ega ishchi topilmadi.", reply_markup=get_admin_kb())
     await state.clear()
 
 @dp.message(F.text == "📢 Hammaga xabar", F.from_user.id == ADMIN_ID)
