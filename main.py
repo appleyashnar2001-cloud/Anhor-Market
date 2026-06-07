@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os  # Tizim o'zgaruvchilarini (Environment Variables) o'qish uchun
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -10,8 +11,9 @@ from pytz import timezone
 import database as db
 
 # --- JORCHILAR SOZLAMASI ---
-BOT_TOKEN = "BOT_TOKEN_SHU_YERGA_YOZILADI"  # BotFather bergan tokenni kiriting
-ADMIN_ID = 7180864511  # Sizning Telegram ID raqamingiz muvaffaqiyatli joylashtirildi
+# Render platformasidagi Environment Variables bo'limidan BOT_TOKEN ni o'qiydi
+BOT_TOKEN = os.getenv("BOT_TOKEN") 
+ADMIN_ID = 7180864511  # Sizning Telegram ID raqamingiz
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -162,7 +164,7 @@ async def auto_close_job():
         except:
             pass
 
-# Taymerlarni sozlash (06:00 va 23:30 dan 5 daqiqa oldin xabar va 23:40 da avtomat yopish)
+# Taymerlarni sozlash (06:00 va 23:30 dan 5 daqiqa oldin xabar, hamda 23:40 da avtomat yopish)
 scheduler.add_job(remind_5_min, "cron", hour=5, minute=55)
 scheduler.add_job(remind_5_min, "cron", hour=23, minute=25)
 scheduler.add_job(auto_close_job, "cron", hour=23, minute=40)
