@@ -5,7 +5,8 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from apscheduler.schedulers.asyncio import AsyncioScheduler
+# Katta-kichik harflar to'g'rilangan import (Python 3.10+ uchun moslashtirildi)
+from apscheduler.schedulers.asyncio import AsyncIOScheduler as AsyncioScheduler
 from pytz import timezone
 
 import database as db
