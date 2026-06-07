@@ -6,7 +6,7 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from fpscheduler.schedulers.asyncio import AsyncIOScheduler as AsyncioScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler as AsyncioScheduler
 from pytz import timezone
 
 import database as db
@@ -136,14 +136,12 @@ async def process_start_work(message: types.Message):
     current_hour = datetime.now(UZB_TZ).hour
     current_minute = datetime.now(UZB_TZ).minute
     
-    # 06:00 dan 23:30 gacha tekshirish
-    if (current_hour < 6) or (current_hour == 23 and current_minute > 30):
+    if (current_hour < 6) or (current_hour == 23 and current_minute > 30) or (current_hour > 23):
         return await message.answer("❌ Hozir ish vaqti emas! Ishni faqat 06:00 dan keyin boshlash mumkin.")
         
     db.start_work(message.from_user.id)
     await message.answer("🟢 Ish boshlandi. Magazin ochildi!", reply_markup=get_worker_kb("active"))
     
-    # Barcha xodimlarga va adminga xabar yuborish
     alert_text = f"🏪 *Magazin ochildi!*\n👤 *{name}* ishni boshladi."
     await bot.send_message(chat_id=ADMIN_ID, text=alert_text, parse_mode="Markdown")
     for tg_id, _, _ in db.get_workers():
@@ -184,9 +182,7 @@ async def chat_finish(message: types.Message, state: FSMContext):
     db.save_chat(name, message.text)
     chat_msg = f"💬 *[CHAT]* *{name}*: {message.text}"
     
-    # Adminga yuborish
     await bot.send_message(chat_id=ADMIN_ID, text=chat_msg, parse_mode="Markdown")
-    # Boshqa ishchilarga yuborish
     for tg_id, _, _ in db.get_workers():
         if tg_id != message.from_user.id:
             try: await bot.send_message(chat_id=tg_id, text=chat_msg, parse_mode="Markdown")
@@ -231,10 +227,9 @@ scheduler.add_job(remind_start_5min, "cron", hour=5, minute=55)
 scheduler.add_job(check_0600_shop, "cron", hour=6, minute=0)
 scheduler.add_job(remind_end_5min, "cron", hour=23, minute=25)
 scheduler.add_job(auto_close_job, "cron", hour=23, minute=40)
-# Har oyning oxirgi kunida tungi 23:59 da arxivlash
 scheduler.add_job(monthly_archive_job, "cron", day="last", hour=23, minute=59)
 
-async main():
+async def main():
     db.init_db()
     scheduler.start()
     await dp.start_polling(bot)
