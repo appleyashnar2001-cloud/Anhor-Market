@@ -1,71 +1,95 @@
 import asyncio
 import logging
-import os  # Tizim o'zgaruvchilarini (Environment Variables) o'qish uchun
+import os
+from datetime import datetime
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-# Katta-kichik harflar to'g'rilangan import (Python 3.10+ uchun moslashtirildi)
-from apscheduler.schedulers.asyncio import AsyncIOScheduler as AsyncioScheduler
+from fpscheduler.schedulers.asyncio import AsyncIOScheduler as AsyncioScheduler
 from pytz import timezone
 
 import database as db
 
-# --- JORCHILAR SOZLAMASI ---
-# Render platformasidagi Environment Variables bo'limidan BOT_TOKEN ni o'qiydi
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
-ADMIN_ID = 7180864511  # Sizning Telegram ID raqamingiz
+ADMIN_ID = 7180864511  
+UZB_TZ = timezone("Asia/Tashkent")
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-scheduler = AsyncioScheduler(timezone=timezone("Asia/Tashkent"))
+scheduler = AsyncioScheduler(timezone=UZB_TZ)
 
 class AdminStates(StatesGroup):
     waiting_for_worker_id = State()
     waiting_for_worker_name = State()
     waiting_for_broadcast = State()
 
-# --- ADMIN KLAVIATURASI ---
+class WorkerStates(StatesGroup):
+    waiting_for_chat = State()
+
+# --- KLAVIATURALAR ---
 def get_admin_kb():
     kb = [
-        [types.KeyboardButton(text="👥 Ishchilar ro'yxati"), types.KeyboardButton(text="➕ Ishchi qo'shish")],
-        [types.KeyboardButton(text="📢 Xabar yuborish")]
+        [types.KeyboardButton(text="👥 Ishchilar va Hisobot"), types.KeyboardButton(text="➕ Ishchi qo'shish")],
+        [types.KeyboardButton(text="🗄 O'tgan oylar hisoboti"), types.KeyboardButton(text="📥 Chatni o'qish")],
+        [types.KeyboardButton(text="📢 Hammaga xabar")]
     ]
     return types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-# --- ISHCHI KLAVIATURASI ---
 def get_worker_kb(status="inactive"):
+    kb = []
     if status == "inactive":
-        kb = [[types.KeyboardButton(text="🚀 Ishni boshlash")]]
+        kb.append([types.KeyboardButton(text="🚀 Ishni boshlash")])
     else:
-        kb = [[types.KeyboardButton(text="🛑 Ishni yakunlash")]]
-    kb.append([types.KeyboardButton(text="📊 Shaxsiy hisobot (Oy)")])
+        kb.append([types.KeyboardButton(text="🛑 Ishni yakunlash")])
+    kb.append([types.KeyboardButton(text="📊 Shaxsiy hisobot (Oy)"), types.KeyboardButton(text="💬 Chatga yozish")])
     return types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-# --- COMMAND START ---
+# --- START COMMAND ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     if message.from_user.id == ADMIN_ID:
-        await message.answer("Xush kelibsiz, Admin!", reply_markup=get_admin_kb())
+        await message.answer("Magazin boshqaruv tizimi. Xush kelibsiz, Admin!", reply_markup=get_admin_kb())
     else:
         worker_name = db.check_worker(message.from_user.id)
         if worker_name:
-            await message.answer(f"Xush kelibsiz, {worker_name}!", reply_markup=get_worker_kb())
+            await message.answer(f"Xush kelibsiz, {worker_name}! Ish vaqti: 06:00 - 23:30", reply_markup=get_worker_kb())
         else:
-            await message.answer(f"Siz tizimda yo'qsiz. ID: `{message.from_user.id}`\nBuni adminga yuboring.", parse_mode="Markdown")
+            await message.answer(f"Siz magazin tizimida yo'qsiz. ID raqamingiz: `{message.from_user.id}`\nBuni adminga bering.", parse_mode="Markdown")
 
-# --- ADMIN FUNKSIYALARI ---
-@dp.message(F.text == "👥 Ishchilar ro'yxati", F.from_user.id == ADMIN_ID)
+# --- ADMIN LOGIKASI ---
+@dp.message(F.text == "👥 Ishchilar va Hisobot", F.from_user.id == ADMIN_ID)
 async def list_workers(message: types.Message):
     workers = db.get_workers()
     if not workers:
-        return await message.answer("Ishchilar mavjud emas.")
+        return await message.answer("Tizimda ishchilar yo'q.")
     
-    text = "📋 *Ishchilar ro'yxati:*\n\n"
+    text = "📋 *Joriy oydagi umumiy hisobot:*\n\n"
     for tg_id, name, status in workers:
         st = "🟢 Ishda" if status == "active" else "🔴 Ketgan"
-        text += f"👤 {name} (ID: `{tg_id}`) - {st}\n"
+        total = db.get_monthly_report(tg_id)
+        text += f"👤 *{name}* ({st})\n↳ Shu oyda jami: `{total}`\n\n"
+    await message.answer(text, parse_mode="Markdown")
+
+@dp.message(F.text == "🗄 O'tgan oylar hisoboti", F.from_user.id == ADMIN_ID)
+async def archived_reports(message: types.Message):
+    rows = db.get_archive_reports()
+    if not rows:
+        return await message.answer("Arxivda eski hisobotlar mavjud emas.")
+    text = "🗄 *Arxivlangan oylar hisoboti:*\n\n"
+    for month, name, time in rows:
+        text += f"📅 {month} | 👤 {name}: `{time}`\n"
+    await message.answer(text, parse_mode="Markdown")
+
+@dp.message(F.text == "📥 Chatni o'qish", F.from_user.id == ADMIN_ID)
+async def read_chat(message: types.Message):
+    logs = db.get_chat_logs()
+    if not logs:
+        return await message.answer("Chatda xabarlar yo'q.")
+    text = "💬 *Chatdagi oxirgi xabarlar:*\n\n"
+    for name, msg, tm in reversed(logs):
+        text += f"[{tm}] *{name}*: {msg}\n"
     await message.answer(text, parse_mode="Markdown")
 
 @dp.message(F.text == "➕ Ishchi qo'shish", F.from_user.id == ADMIN_ID)
@@ -76,7 +100,7 @@ async def add_worker_start(message: types.Message, state: FSMContext):
 @dp.message(AdminStates.waiting_for_worker_id, F.from_user.id == ADMIN_ID)
 async def add_worker_id(message: types.Message, state: FSMContext):
     if not message.text.isdigit():
-        return await message.answer("ID faqat raqamlardan iborat bo'lishi kerak!")
+        return await message.answer("ID faqat raqam bo'lishi kerak!")
     await state.update_data(tg_id=int(message.text))
     await message.answer("Ishchining Ismi va Familiyasini kiriting:")
     await state.set_state(AdminStates.waiting_for_worker_name)
@@ -84,93 +108,133 @@ async def add_worker_id(message: types.Message, state: FSMContext):
 @dp.message(AdminStates.waiting_for_worker_name, F.from_user.id == ADMIN_ID)
 async def add_worker_finish(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    tg_id = data['tg_id']
-    name = message.text
-    
-    if db.add_worker(tg_id, name):
-        await message.answer(f"✅ {name} muvaffaqiyatli qo'shildi!", reply_markup=get_admin_kb())
-    else:
-        await message.answer("❌ Xatolik yuz berdi.")
+    if db.add_worker(data['tg_id'], message.text):
+        await message.answer(f"✅ {message.text} muvaffaqiyatli qo'shildi!", reply_markup=get_admin_kb())
     await state.clear()
 
-@dp.message(F.text == "📢 Xabar yuborish", F.from_user.id == ADMIN_ID)
+@dp.message(F.text == "📢 Hammaga xabar", F.from_user.id == ADMIN_ID)
 async def broadcast_start(message: types.Message, state: FSMContext):
-    await message.answer("Barcha ishchilarga yuboriladigan xabarni kiriting:")
+    await message.answer("Xabarni kiriting:")
     await state.set_state(AdminStates.waiting_for_broadcast)
 
 @dp.message(AdminStates.waiting_for_broadcast, F.from_user.id == ADMIN_ID)
 async def broadcast_finish(message: types.Message, state: FSMContext):
-    workers = db.get_workers()
-    text = message.text
-    count = 0
-    for tg_id, _, _ in workers:
+    for tg_id, _, _ in db.get_workers():
         try:
-            await bot.send_message(chat_id=tg_id, text=f"📢 *Admindan xabar:*\n\n{text}", parse_mode="Markdown")
-            count += 1
-        except:
-            pass
-    await message.answer(f"✅ Xabar {count} ta ishchiga yuborildi.", reply_markup=get_admin_kb())
+            await bot.send_message(chat_id=tg_id, text=f"📢 *Admindan xabar:*\n\n{message.text}", parse_mode="Markdown")
+        except: pass
+    await message.answer("✅ Yuborildi.", reply_markup=get_admin_kb())
     await state.clear()
 
-# --- ISHCHILAR FUNKSIYALARI ---
+
+# --- ISHCHILAR LOGIKASI ---
 @dp.message(F.text == "🚀 Ishni boshlash")
 async def process_start_work(message: types.Message):
     name = db.check_worker(message.from_user.id)
-    if not name:
-        return await message.answer("Siz ro'yxatda yo'qsiz!")
+    if not name: return await message.answer("Ro'yxatda yo'qsiz.")
     
+    current_hour = datetime.now(UZB_TZ).hour
+    current_minute = datetime.now(UZB_TZ).minute
+    
+    # 06:00 dan 23:30 gacha tekshirish
+    if (current_hour < 6) or (current_hour == 23 and current_minute > 30):
+        return await message.answer("❌ Hozir ish vaqti emas! Ishni faqat 06:00 dan keyin boshlash mumkin.")
+        
     db.start_work(message.from_user.id)
-    await message.answer("🟢 Ishingiz boshlandi. Barakali bo'lsin!", reply_markup=get_worker_kb("active"))
-    await bot.send_message(chat_id=ADMIN_ID, text=f"🟢 *{name}* ishga keldi.")
+    await message.answer("🟢 Ish boshlandi. Magazin ochildi!", reply_markup=get_worker_kb("active"))
+    
+    # Barcha xodimlarga va adminga xabar yuborish
+    alert_text = f"🏪 *Magazin ochildi!*\n👤 *{name}* ishni boshladi."
+    await bot.send_message(chat_id=ADMIN_ID, text=alert_text, parse_mode="Markdown")
+    for tg_id, _, _ in db.get_workers():
+        if tg_id != message.from_user.id:
+            try: await bot.send_message(chat_id=tg_id, text=alert_text, parse_mode="Markdown")
+            except: pass
 
 @dp.message(F.text == "🛑 Ishni yakunlash")
 async def process_end_work(message: types.Message):
     name = db.check_worker(message.from_user.id)
-    if not name:
-        return await message.answer("Siz ro'yxatda yo'qsiz!")
-    
-    duration = db.end_work(message.from_user.id)
-    if duration:
-        await message.answer(f"🛑 Ish yakunlandi.\nBugun ishlagan vaqtingiz: *{duration}*", reply_markup=get_worker_kb("inactive"), parse_mode="Markdown")
-        await bot.send_message(chat_id=ADMIN_ID, text=f"🛑 *{name}* ishni tugatdi.\nSarflangan vaqt: {duration}")
+    if not name: return
+
+    dur = db.end_work(message.from_user.id)
+    if dur:
+        await message.answer(f"🛑 Ish tugadi. Bugun ish vaqtingiz: {dur}", reply_markup=get_worker_kb("inactive"))
+        await bot.send_message(chat_id=ADMIN_ID, text=f"🛑 *{name}* ishni yakunladi. Vaqt: {dur}")
     else:
-        await message.answer("Siz ish boshlamagandirsiz?", reply_markup=get_worker_kb("inactive"))
+        await message.answer("Siz hali ish boshlamagansiz.", reply_markup=get_worker_kb("inactive"))
 
 @dp.message(F.text == "📊 Shaxsiy hisobot (Oy)")
 async def process_report(message: types.Message):
+    if db.check_worker(message.from_user.id):
+        total = db.get_monthly_report(message.from_user.id)
+        await message.answer(f"📊 Shu oyda jami ishlagan vaqtingiz: *{total}*", parse_mode="Markdown")
+
+# --- ICHKI CHAT LOGIKASI ---
+@dp.message(F.text == "💬 Chatga yozish")
+async def chat_start(message: types.Message, state: FSMContext):
+    if db.check_worker(message.from_user.id):
+        await message.answer("Chatga yubormoqchi bo'lgan xabaringizni yozing:")
+        await state.set_state(WorkerStates.waiting_for_chat)
+
+@dp.message(WorkerStates.waiting_for_chat)
+async def chat_finish(message: types.Message, state: FSMContext):
     name = db.check_worker(message.from_user.id)
-    if not name:
-        return await message.answer("Siz ro'yxatda yo'qsiz!")
+    if not name: return
     
-    total = db.get_monthly_report(message.from_user.id)
-    await message.answer(f"📊 Shu oyda jami ishlagan vaqtingiz: *{total}*", parse_mode="Markdown")
+    db.save_chat(name, message.text)
+    chat_msg = f"💬 *[CHAT]* *{name}*: {message.text}"
+    
+    # Adminga yuborish
+    await bot.send_message(chat_id=ADMIN_ID, text=chat_msg, parse_mode="Markdown")
+    # Boshqa ishchilarga yuborish
+    for tg_id, _, _ in db.get_workers():
+        if tg_id != message.from_user.id:
+            try: await bot.send_message(chat_id=tg_id, text=chat_msg, parse_mode="Markdown")
+            except: pass
+            
+    await message.answer("✅ Xabaringiz barcha ishchilarga va adminga yuborildi.", reply_markup=get_worker_kb())
+    await state.clear()
 
 
-# --- AVTOMATIK XABARLAR (SCHEDULER) ---
-async def remind_5_min():
-    workers = db.get_workers()
-    for tg_id, _, _ in workers:
-        try:
-            await bot.send_message(chat_id=tg_id, text="⏰ Diqqat! Ish boshlanishiga 5 minut qoldi.")
-        except:
-            pass
+# --- AVTOMATIK CRON VAZIFALAR ---
+async def remind_start_5min():
+    for tg_id, _, _ in db.get_workers():
+        try: await bot.send_message(chat_id=tg_id, text="⏰ Diqqat! Ish boshlanishiga 5 minut qoldi.")
+        except: pass
+
+async def check_0600_shop():
+    for tg_id, name, status in db.get_workers():
+        if status == "inactive":
+            try: await bot.send_message(chat_id=tg_id, text="🚨 *Ish vaqti boshlandi!* Darxol magazinni ochishingizni va magazinga borishingizni so'raymiz!", parse_mode="Markdown")
+            except: pass
+
+async def remind_end_5min():
+    for tg_id, _, _ in db.get_workers():
+        try: await bot.send_message(chat_id=tg_id, text="⏰ Diqqat! Ish tugashiga 5 minut qoldi. Ishni yopishni unutmang.")
+        except: pass
 
 async def auto_close_job():
-    closed_list = db.auto_close_all()
-    for tg_id, dur in closed_list:
+    closed = db.auto_close_all()
+    for tg_id, dur in closed:
         name = db.check_worker(tg_id)
         try:
-            await bot.send_message(chat_id=tg_id, text=f"⚠️ Vaqt 23:40 bo'lgani sababli tizim ishni avtomat yopdi.\nBugun: {dur}", reply_markup=get_worker_kb("inactive"))
-            await bot.send_message(chat_id=ADMIN_ID, text=f"⚠️ *{name}* ishni yopishni unutgan! Tizim avtomat yopdi. Vaqt: {dur}")
-        except:
-            pass
+            await bot.send_message(chat_id=tg_id, text=f"⚠️ Vaqt 23:40 bo'ldi, tizim ishni avtomatik yopdi. Vaqt: {dur}", reply_markup=get_worker_kb("inactive"))
+            await bot.send_message(chat_id=ADMIN_ID, text=f"⚠️ *{name}* ishni yopishni unutgan! Tizim avtomatik yopdi. Vaqt: {dur}")
+        except: pass
 
-# Taymerlarni sozlash (06:00 va 23:30 dan 5 daqiqa oldin xabar, hamda 23:40 da avtomat yopish)
-scheduler.add_job(remind_5_min, "cron", hour=5, minute=55)
-scheduler.add_job(remind_5_min, "cron", hour=23, minute=25)
+async def monthly_archive_job():
+    db.archive_month_tizim()
+    await bot.send_message(chat_id=ADMIN_ID, text="📅 *Tizim eslatmasi:* Yangi oy boshlandi! O'tgan oy hisobotlari arxivlandi va joriy hisoblagichlar 0 ga tushirildi.")
+
+# Taymerlarni sozlash (Asia/Tashkent vaqti bo'yicha)
+scheduler.add_job(remind_start_5min, "cron", hour=5, minute=55)
+scheduler.add_job(check_0600_shop, "cron", hour=6, minute=0)
+scheduler.add_job(remind_end_5min, "cron", hour=23, minute=25)
 scheduler.add_job(auto_close_job, "cron", hour=23, minute=40)
+# Har oyning oxirgi kunida tungi 23:59 da arxivlash
+scheduler.add_job(monthly_archive_job, "cron", day="last", hour=23, minute=59)
 
-async def main():
+async main():
     db.init_db()
     scheduler.start()
     await dp.start_polling(bot)
