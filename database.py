@@ -8,13 +8,11 @@ UZB_TZ = pytz.timezone("Asia/Tashkent")
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    # Ishchilar table
     cursor.execute('''CREATE TABLE IF NOT EXISTS workers (
         tg_id INTEGER PRIMARY KEY,
         name TEXT,
         status TEXT DEFAULT 'inactive'
     )''')
-    # Davomat table
     cursor.execute('''CREATE TABLE IF NOT EXISTS attendance (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         tg_id INTEGER,
@@ -23,14 +21,12 @@ def init_db():
         duration TEXT,
         month_key TEXT
     )''')
-    # Arxivlangan oylar table
     cursor.execute('''CREATE TABLE IF NOT EXISTS monthly_archive (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         month_key TEXT,
         worker_name TEXT,
         total_time TEXT
     )''')
-    # Chat table
     cursor.execute('''CREATE TABLE IF NOT EXISTS chat_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sender_name TEXT,
@@ -49,6 +45,23 @@ def add_worker(tg_id, name):
         return True
     except:
         return False
+    finally:
+        conn.close()
+
+# --- ISHCHINI O'CHIRISH FUNKSIYASI ---
+def remove_worker(tg_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT name FROM workers WHERE tg_id = ?", (tg_id,))
+        row = cursor.fetchone()
+        if row:
+            cursor.execute("DELETE FROM workers WHERE tg_id = ?", (tg_id,))
+            conn.commit()
+            return row[0]  # O'chirilgan ishchining ismi
+        return None
+    except:
+        return None
     finally:
         conn.close()
 
@@ -80,7 +93,7 @@ def start_work(tg_id):
 
 def end_work(tg_id):
     conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+    cursor = cursor = conn.cursor()
     now_str = datetime.now(UZB_TZ).strftime("%Y-%m-%d %H:%M:%S")
     
     cursor.execute("SELECT id, start_time FROM attendance WHERE tg_id = ? AND end_time IS NULL ORDER BY id DESC LIMIT 1", (tg_id,))
@@ -164,7 +177,6 @@ def archive_month_tizim():
         total = get_monthly_report(tg_id)
         cursor.execute("INSERT INTO monthly_archive (month_key, worker_name, total_time) VALUES (?, ?, ?)", (current_month, name, total))
     
-    # Yangi oy uchun joriy jadvalni tozalash shart emas, chunki `month_key` o'zgaradi va filtrda 0 bo'lib ko'rinadi.
     conn.commit()
     conn.close()
 
